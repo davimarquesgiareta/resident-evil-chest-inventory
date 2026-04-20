@@ -1,13 +1,39 @@
-# 🧟‍♂️ Survival Horror Inventory System
+# 🧟‍♂️ Sistema de Inventário (estilo Resident Evil)
 
-A web-based inventory management system inspired by the classic *Resident Evil* franchise. This project simulates the iconic resource management mechanics, including the item box (stash), player inventory, complex item combinations, and ammo stacking.
+Aplicação web inspirada no inventário clássico de *Survival Horror* (Baú/Stash + Inventário do Jogador), usando **Next.js + TypeScript + Tailwind** e **Supabase (PostgreSQL)**.
 
-Built to showcase state management, drag-and-drop interactions, and relational database modeling.
+## ✨ Funcionalidades (alvo)
 
-## ✨ Features
+- **Movimentação**: mover itens entre **Baú** e **Inventário**.
+- **Empilhamento (Stacking)**: somar itens iguais e empilháveis até `max_stack`, com overflow.
+- **Combinação (Merge/Crafting)**: combinar itens diferentes conforme `item_combinations`.
+- **Recarga de armas**: combinar munição com arma compatível (a ser evoluído).
+- **Persistência de grade**: respeitar `slot_index` para desenhar a UI.
 
-* **Drag-and-Drop Interactions:** Seamlessly move items between the Stash (Item Box) and the Player Inventory.
-* **Item Stacking:** Automatically merge identical stackable items (e.g., ammo clips, shells) up to a predefined limit (`max_stack`). Overflow logic is handled automatically.
-* **Crafting & Combinations (Merge):** Combine specific items to create new ones (e.g., mixing Green and Red Herbs) based on a dynamic relational database recipe system.
-* **Weapon Reloading:** Combine ammo with compatible weapons to update their internal loaded state.
-* **Grid Tracking:** Maintains the exact positional `slot_index` of items within the UI grid.
+## ✅ Requisitos
+
+- Node.js (recomendado \(>= 18\))
+
+## ▶️ Rodando localmente
+
+1) Instale as dependências:
+
+```bash
+npm install
+```
+
+2) Crie o arquivo `.env.local` (veja `.env.local.example`).
+
+3) Rode o servidor:
+
+```bash
+npm run dev
+```
+
+Abra `http://localhost:3000`.
+
+## 📦 Stack
+
+- Next.js (App Router)
+- TailwindCSS
+- Supabase (`@supabase/supabase-js`)
