@@ -1,11 +1,13 @@
 "use client";
 
 import Image from "next/image";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   deleteInventoryRow,
+  fetchAllItems,
   fetchInventory,
   fetchItemById,
+  fetchItemByNameLike,
   findCombination,
   insertInventoryRow,
   updateInventoryRow,
@@ -17,6 +19,20 @@ type FocusArea = "STASH" | "PLAYER";
 const PLAYER_GRID_COLS = 2;
 const PLAYER_GRID_ROWS = 4;
 const PLAYER_GRID_SIZE = PLAYER_GRID_COLS * PLAYER_GRID_ROWS;
+const BERETTA_MAGAZINE_SIZE = 15;
+const BERETTA_MAX_AMMO = 90;
+const INVENTORY_BASELINE_KEY = "re_inventory_baseline_v1";
+const SHOTGUN_MAGAZINE_SIZE = 6;
+const SHOTGUN_MAX_AMMO = 42;
+const COLT_PYTHON_MAGAZINE_SIZE = 4;
+const BAZOOKA_ROUNDS_SIZE = 6;
+const FACTORY_PLAYER_LOADOUT = [
+  "lighter",
+  "ink ribbon",
+  "first aid spray",
+  "combat knife",
+  "beretta m92fs",
+];
 
 function clampToGrid(slotIndex: number) {
   return Math.max(0, Math.min(PLAYER_GRID_SIZE - 1, slotIndex));
@@ -37,6 +53,132 @@ function getNextStashSlot(rows: InventoryWithItem[]) {
   return Math.max(...rows.map((r) => r.slot_index)) + 1;
 }
 
+function isBerettaM92FS(row: InventoryWithItem) {
+  return row.item.name.toLowerCase().includes("beretta m92fs");
+}
+
+function isHandgunClip(row: InventoryWithItem) {
+  return row.item.name.toLowerCase().includes("clip");
+}
+
+function isShells(row: InventoryWithItem) {
+  return row.item.name.toLowerCase().includes("shell");
+}
+
+function getHerbMixResultName(a: InventoryWithItem, b: InventoryWithItem): string | null {
+  const aName = a.item.name.toLowerCase();
+  const bName = b.item.name.toLowerCase();
+  const pair = [aName, bName].sort().join("|");
+
+  if (pair === "green herb|green herb") return "Mixed Herbs (G+G)";
+  if (pair === "green herb|red herb") return "Mixed Herbs (G+R)";
+  if (pair === "blue herb|green herb") return "Mixed Herbs (G+B)";
+  if (pair === "blue herb|mixed herbs (g+g)") return "Mixed Herbs (G+G+B)";
+  if (pair === "blue herb|mixed herbs (g+r)") return "Mixed Herbs (G+R+B)";
+  if (pair === "green herb|mixed herbs (g+g)") return "Mixed Herbs (G+G+B)";
+  return null;
+}
+
+function getFactoryQuantityByName(itemName: string): number {
+  const name = itemName.toLowerCase();
+  if (name.includes("clip")) return 15;
+  if (name.includes("shell")) return 7;
+  if (name.includes("acid rounds")) return 6;
+  if (name.includes("explosive rounds")) return 6;
+  if (name.includes("flame rounds")) return 6;
+  if (name.includes("magnum rounds")) return 6;
+  return 1;
+}
+
+type BazookaRoundType = "acid" | "explosive" | "flame";
+
+type WeaponState = {
+  mode: "numeric" | "percent" | "infinite";
+  value: number;
+  bazookaRoundType?: BazookaRoundType;
+};
+
+function isBazooka(row: InventoryWithItem) {
+  return row.item.name.toLowerCase().includes("bazooka");
+}
+
+function isShotgun(row: InventoryWithItem) {
+  const name = row.item.name.toLowerCase();
+  return (
+    (name.includes("shotgun") || name.includes("m870") || name.includes("remington")) &&
+    !name.includes("broken shotgun")
+  );
+}
+
+function isColtPython(row: InventoryWithItem) {
+  return row.item.name.toLowerCase().includes("colt python");
+}
+
+function isFlamethrower(row: InventoryWithItem) {
+  return row.item.name.toLowerCase().includes("flamethrower");
+}
+
+function isIngram(row: InventoryWithItem) {
+  return row.item.name.toLowerCase().includes("ingram");
+}
+
+function isRocketLauncher(row: InventoryWithItem) {
+  return row.item.name.toLowerCase().includes("rocket launcher");
+}
+
+function getBazookaRoundType(row: InventoryWithItem): BazookaRoundType | null {
+  const name = row.item.name.toLowerCase();
+  if (name.includes("acid rounds")) return "acid";
+  if (name.includes("explosive rounds")) return "explosive";
+  if (name.includes("flame rounds")) return "flame";
+  return null;
+}
+
+function isSupportedWeapon(row: InventoryWithItem) {
+  return (
+    isBerettaM92FS(row) ||
+    isShotgun(row) ||
+    isColtPython(row) ||
+    isBazooka(row) ||
+    isFlamethrower(row) ||
+    isIngram(row) ||
+    isRocketLauncher(row)
+  );
+}
+
+function createFactoryWeaponState(row: InventoryWithItem): WeaponState | null {
+  if (isBerettaM92FS(row)) return { mode: "numeric", value: BERETTA_MAGAZINE_SIZE };
+  if (isShotgun(row)) return { mode: "numeric", value: SHOTGUN_MAGAZINE_SIZE };
+  if (isColtPython(row)) return { mode: "numeric", value: COLT_PYTHON_MAGAZINE_SIZE };
+  if (isBazooka(row)) {
+    return { mode: "numeric", value: BAZOOKA_ROUNDS_SIZE, bazookaRoundType: "explosive" };
+  }
+  if (isFlamethrower(row)) return { mode: "percent", value: 100 };
+  if (isIngram(row) || isRocketLauncher(row)) return { mode: "infinite", value: 0 };
+  return null;
+}
+
+function formatWeaponState(state: WeaponState | undefined) {
+  if (!state) return "";
+  if (state.mode === "infinite") return "∞";
+  if (state.mode === "percent") return `${state.value}%`;
+  return String(state.value);
+}
+
+function getWeaponBadgeClass(state: WeaponState | undefined) {
+  if (state?.bazookaRoundType === "acid") return "text-yellow-300";
+  if (state?.bazookaRoundType === "explosive") return "text-emerald-300";
+  if (state?.bazookaRoundType === "flame") return "text-red-300";
+  return "text-zinc-200";
+}
+
+type InventoryBaselineRow = {
+  item_id: string;
+  quantity: number;
+  location: ItemLocation;
+  slot_index: number;
+};
+
 export default function Home() {
   const [rows, setRows] = useState<InventoryWithItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -50,8 +192,12 @@ export default function Home() {
   const [contextOpen, setContextOpen] = useState(false);
   const [checkOpen, setCheckOpen] = useState(false);
   const [combineSourceId, setCombineSourceId] = useState<string | null>(null);
+  const [draggingInventoryId, setDraggingInventoryId] = useState<string | null>(null);
+  const [dragOverSlot, setDragOverSlot] = useState<number | null>(null);
 
   const [equippedWeaponId, setEquippedWeaponId] = useState<string | null>(null);
+  const [weaponStateById, setWeaponStateById] = useState<Record<string, WeaponState>>({});
+  const hasBootstrappedRef = useRef(false);
 
   const stashItems = useMemo(
     () => rows.filter((r) => r.location === "STASH").sort((a, b) => a.slot_index - b.slot_index),
@@ -94,9 +240,113 @@ export default function Home() {
     }
   }, []);
 
+  const buildBaselineFromRows = useCallback((sourceRows: InventoryWithItem[]): InventoryBaselineRow[] => {
+    return sourceRows.map((row) => ({
+      item_id: row.item_id,
+      quantity: row.quantity,
+      location: row.location,
+      slot_index: row.slot_index,
+    }));
+  }, []);
+
   useEffect(() => {
-    void refresh();
+    if (hasBootstrappedRef.current) return;
+    hasBootstrappedRef.current = true;
+
+    const bootstrap = async () => {
+      setLoading(true);
+      setErrorMsg(null);
+      try {
+        const current = await fetchInventory();
+        // A cada abertura, o "fábrica" passa a ser o estado atual do banco.
+        const baseline = buildBaselineFromRows(current);
+        window.localStorage.setItem(INVENTORY_BASELINE_KEY, JSON.stringify(baseline));
+
+        setEquippedWeaponId(null);
+        setWeaponStateById({});
+        setRows(current);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Erro ao inicializar inventário.";
+        setErrorMsg(msg);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    void bootstrap();
+  }, [buildBaselineFromRows]);
+
+  const handleResetFactory = useCallback(async () => {
+    setLoading(true);
+    setErrorMsg(null);
+    try {
+      const allItems = await fetchAllItems();
+      const itemByName = new Map(allItems.map((item) => [item.name.toLowerCase(), item]));
+      const missingLoadout = FACTORY_PLAYER_LOADOUT.filter((name) => !itemByName.has(name));
+      if (missingLoadout.length > 0) {
+        setErrorMsg(`Itens base não encontrados no catálogo: ${missingLoadout.join(", ")}`);
+        return;
+      }
+
+      const current = await fetchInventory();
+      for (const row of current) {
+        await deleteInventoryRow(row.id);
+      }
+
+      const playerIds = new Set<string>();
+      for (let slot = 0; slot < FACTORY_PLAYER_LOADOUT.length; slot += 1) {
+        const key = FACTORY_PLAYER_LOADOUT[slot];
+        const item = itemByName.get(key);
+        if (!item) continue;
+        playerIds.add(item.id);
+        await insertInventoryRow({
+          item_id: item.id,
+          quantity: getFactoryQuantityByName(item.name),
+          location: "PLAYER",
+          slot_index: slot,
+        });
+      }
+
+      const stashItems = allItems.filter((item) => !playerIds.has(item.id));
+      for (let slot = 0; slot < stashItems.length; slot += 1) {
+        const item = stashItems[slot];
+        await insertInventoryRow({
+          item_id: item.id,
+          quantity: getFactoryQuantityByName(item.name),
+          location: "STASH",
+          slot_index: slot,
+        });
+      }
+
+      setCombineSourceId(null);
+      setContextOpen(false);
+      setCheckOpen(false);
+      setEquippedWeaponId(null);
+      setWeaponStateById({});
+      await refresh();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Erro ao resetar inventário.";
+      setErrorMsg(msg);
+    } finally {
+      setLoading(false);
+    }
   }, [refresh]);
+
+  useEffect(() => {
+    setWeaponStateById((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const row of rows) {
+        if (!isSupportedWeapon(row)) continue;
+        if (next[row.id] !== undefined) continue;
+        const state = createFactoryWeaponState(row);
+        if (!state) continue;
+        next[row.id] = state;
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [rows]);
 
   useEffect(() => {
     if (!contextOpen) return;
@@ -141,6 +391,89 @@ export default function Home() {
 
       setErrorMsg(null);
       try {
+        // recarga de arma
+        const weaponRow = isSupportedWeapon(source)
+          ? source
+          : isSupportedWeapon(target)
+            ? target
+            : null;
+        const clipRow = isHandgunClip(source) ? source : isHandgunClip(target) ? target : null;
+        const bazookaRoundsRow = getBazookaRoundType(source)
+          ? source
+          : getBazookaRoundType(target)
+            ? target
+            : null;
+
+        // Beretta + Clip => soma +15 ate 90 e consome o clip inteiro.
+        if (weaponRow && isBerettaM92FS(weaponRow) && clipRow) {
+          const currentAmmo = weaponStateById[weaponRow.id]?.value ?? BERETTA_MAGAZINE_SIZE;
+          const nextAmmo = Math.min(BERETTA_MAX_AMMO, currentAmmo + BERETTA_MAGAZINE_SIZE);
+          const didReload = nextAmmo > currentAmmo;
+
+          if (didReload) {
+            await deleteInventoryRow(clipRow.id);
+            setEquippedWeaponId(weaponRow.id);
+            setWeaponStateById((prev) => ({
+              ...prev,
+              [weaponRow.id]: { mode: "numeric", value: nextAmmo },
+            }));
+          }
+
+          setCombineSourceId(null);
+          await refresh();
+          return;
+        }
+
+        // Remington/Shotgun + Shells => carrega usando o stack de shells e consome o item inteiro.
+        const shellsRow = isShells(source) ? source : isShells(target) ? target : null;
+        if (weaponRow && isShotgun(weaponRow) && shellsRow) {
+          const currentAmmo = weaponStateById[weaponRow.id]?.value ?? SHOTGUN_MAGAZINE_SIZE;
+          const nextAmmo = Math.min(SHOTGUN_MAX_AMMO, currentAmmo + Math.max(1, shellsRow.quantity));
+          const didReload = nextAmmo > currentAmmo;
+
+          if (didReload) {
+            await deleteInventoryRow(shellsRow.id);
+            setEquippedWeaponId(weaponRow.id);
+            setWeaponStateById((prev) => ({
+              ...prev,
+              [weaponRow.id]: { mode: "numeric", value: nextAmmo },
+            }));
+          }
+
+          setCombineSourceId(null);
+          await refresh();
+          return;
+        }
+
+        // Bazooka + rounds => substitui tipo/quantidade atual e consome o item de rounds.
+        if (weaponRow && isBazooka(weaponRow) && bazookaRoundsRow) {
+          const nextType = getBazookaRoundType(bazookaRoundsRow);
+          if (nextType) {
+            const currentState = weaponStateById[weaponRow.id];
+            const sameType =
+              currentState?.mode === "numeric" && currentState.bazookaRoundType === nextType;
+            const nextValue = sameType
+              ? (currentState?.value ?? BAZOOKA_ROUNDS_SIZE) + bazookaRoundsRow.quantity
+              : bazookaRoundsRow.quantity > 0
+                ? bazookaRoundsRow.quantity
+                : BAZOOKA_ROUNDS_SIZE;
+
+            await deleteInventoryRow(bazookaRoundsRow.id);
+            setEquippedWeaponId(weaponRow.id);
+            setWeaponStateById((prev) => ({
+              ...prev,
+              [weaponRow.id]: {
+                mode: "numeric",
+                value: nextValue,
+                bazookaRoundType: nextType,
+              },
+            }));
+            setCombineSourceId(null);
+            await refresh();
+            return;
+          }
+        }
+
         // stacking (mesmo item)
         if (source.item_id === target.item_id && source.item.stackable) {
           const max = Math.max(1, source.item.max_stack || 1);
@@ -162,15 +495,18 @@ export default function Home() {
 
         // crafting/merge (itens diferentes)
         const recipe = await findCombination(source.item_id, target.item_id);
-        if (!recipe) {
-          setErrorMsg("Esses itens não combinam.");
-          setCombineSourceId(null);
-          return;
+        let resultItem = recipe ? await fetchItemById(recipe.result_item_id) : null;
+
+        // Fallback para receitas básicas de herbs quando o banco não tiver item_combinations preenchida.
+        if (!resultItem) {
+          const fallbackName = getHerbMixResultName(source, target);
+          if (fallbackName) {
+            resultItem = await fetchItemByNameLike(fallbackName);
+          }
         }
 
-        const resultItem = await fetchItemById(recipe.result_item_id);
         if (!resultItem) {
-          setErrorMsg("Item resultante não encontrado no catálogo.");
+          setErrorMsg("Esses itens não combinam.");
           setCombineSourceId(null);
           return;
         }
@@ -195,7 +531,7 @@ export default function Home() {
         setCombineSourceId(null);
       }
     },
-    [combineSourceId, refresh, rows],
+    [combineSourceId, refresh, rows, weaponStateById],
   );
 
   const onPlayerCellClick = useCallback(
@@ -233,6 +569,29 @@ export default function Home() {
       setContextOpen(true);
     },
     [combineSourceId, playerItems],
+  );
+
+  const movePlayerItemToSlot = useCallback(
+    async (inventoryId: string, targetSlot: number) => {
+      const source = playerItems.find((r) => r.id === inventoryId) ?? null;
+      if (!source) return;
+
+      const clampedTarget = clampToGrid(targetSlot);
+      if (source.slot_index === clampedTarget) return;
+
+      const hasItemAtTarget = playerItems.some((r) => r.slot_index === clampedTarget);
+      if (hasItemAtTarget) return;
+
+      setErrorMsg(null);
+      try {
+        await updateInventoryRow(source.id, { slot_index: clampedTarget });
+        await refresh();
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Erro ao mover item no inventário.";
+        setErrorMsg(msg);
+      }
+    },
+    [playerItems, refresh],
   );
 
   const moveItemTo = useCallback(
@@ -388,12 +747,20 @@ export default function Home() {
       <div className="mx-auto flex max-w-[1500px] flex-col gap-6 px-8 py-8">
         <header className="flex items-center justify-between">
           <div className="text-sm tracking-[0.25em] text-zinc-300">RESIDENT EVIL — INVENTORY</div>
-          <button
-            className="rounded border border-zinc-700 bg-zinc-900 px-3 py-1 text-xs hover:bg-zinc-800"
-            onClick={() => void refresh()}
-          >
-            Atualizar
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              className="rounded border border-zinc-700 bg-zinc-900 px-3 py-1 text-xs hover:bg-zinc-800"
+              onClick={() => void refresh()}
+            >
+              Atualizar
+            </button>
+            <button
+              className="rounded border border-amber-700 bg-amber-950/40 px-3 py-1 text-xs text-amber-200 hover:bg-amber-900/40"
+              onClick={() => void handleResetFactory()}
+            >
+              Resetar fábrica
+            </button>
+          </div>
         </header>
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-[560px_auto] lg:justify-center">
@@ -515,7 +882,7 @@ export default function Home() {
                       alt={equippedRow.item.name}
                       width={160}
                       height={80}
-                      className="max-h-[60px] w-auto object-contain"
+                      className="h-full w-full object-contain p-1"
                     />
                   ) : (
                     <div className="text-xs text-zinc-500">—</div>
@@ -543,6 +910,17 @@ export default function Home() {
                 const row = playerItems.find((r) => r.slot_index === slot) ?? null;
                 const selected = clampToGrid(playerSelectedSlot) === slot;
                 const isCombineSource = combineSourceId && row?.id === combineSourceId;
+                const isDropTarget =
+                  dragOverSlot === slot && !row && draggingInventoryId !== null;
+                const weaponState = row ? weaponStateById[row.id] : undefined;
+                const slotLabel = row
+                  ? isSupportedWeapon(row)
+                    ? formatWeaponState(weaponState)
+                    : formatQty(row)
+                  : "";
+                const slotLabelColor = row && isSupportedWeapon(row)
+                  ? getWeaponBadgeClass(weaponState)
+                  : "text-zinc-200";
                 return (
                   <button
                     key={slot}
@@ -550,12 +928,42 @@ export default function Home() {
                       "group relative h-[100px] w-[100px] rounded border bg-[#0b0f18] p-1 text-left",
                       selected ? "border-red-500" : "border-zinc-700 hover:border-red-500/70",
                       isCombineSource ? "ring-2 ring-amber-400/50" : "",
+                      isDropTarget ? "ring-2 ring-cyan-400/60 border-cyan-400" : "",
                     ].join(" ")}
+                    draggable={!!row}
                     onClick={() => void onPlayerCellClick(slot)}
                     onContextMenu={(e) => onPlayerCellContextMenu(e, slot)}
                     onDoubleClick={() => {
                       if (!row) return;
                       void moveItemTo(row, "STASH");
+                    }}
+                    onDragStart={(e) => {
+                      if (!row) return;
+                      setDraggingInventoryId(row.id);
+                      e.dataTransfer.effectAllowed = "move";
+                      e.dataTransfer.setData("text/plain", row.id);
+                    }}
+                    onDragEnd={() => {
+                      setDraggingInventoryId(null);
+                      setDragOverSlot(null);
+                    }}
+                    onDragOver={(e) => {
+                      if (!draggingInventoryId) return;
+                      if (row) return;
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = "move";
+                      setDragOverSlot(slot);
+                    }}
+                    onDragLeave={() => {
+                      if (dragOverSlot === slot) setDragOverSlot(null);
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const draggedId = e.dataTransfer.getData("text/plain") || draggingInventoryId;
+                      setDraggingInventoryId(null);
+                      setDragOverSlot(null);
+                      if (!draggedId || row) return;
+                      void movePlayerItemToSlot(draggedId, slot);
                     }}
                   >
                     {row?.item.image_url ? (
@@ -572,9 +980,14 @@ export default function Home() {
                       </div>
                     ) : null}
 
-                    {row ? (
-                    <div className="pointer-events-none absolute bottom-1 right-1 rounded bg-black/60 px-2 py-0.5 text-sm text-zinc-200">
-                        {formatQty(row)}
+                    {row && slotLabel ? (
+                      <div
+                        className={[
+                          "pointer-events-none absolute bottom-1 right-1 rounded bg-black/60 px-2 py-0.5 text-sm",
+                          slotLabelColor,
+                        ].join(" ")}
+                      >
+                        {slotLabel}
                       </div>
                     ) : null}
                   </button>
